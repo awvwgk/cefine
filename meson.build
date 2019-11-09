@@ -12,4 +12,16 @@ conf.set('origin', run_command(find_program('hostname')).stdout().strip())
 configure_file(input : 'version.fh', output : 'cefine-version.fh',
   configuration : conf)
 
-executable(meson.project_name(), ['cefine.f90', 'io_tools.f90', 'argparser.f90'])
+fsrcs = ['cefine.f90',
+         'argparser.f90',
+         'molecule.f90',
+         'utils/units.f90',
+         'utils/io_tools.f90',
+         'utils/atomic_units.f90',
+         'utils/resize_arrays.f90',
+         'utils/constants.f90',
+         'utils/pbc_tools.f90',
+         'utils/filetools.f90',
+         'utils/molecule_reader.f90']
+
+executable(meson.project_name(), fsrcs)

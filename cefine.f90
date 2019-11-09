@@ -19,12 +19,15 @@ Program comand_line_define
    use, intrinsic :: iso_fortran_env
    use io_tools
    use tbdef_argparser
+   use tbdef_molecule
+   use tbmod_file_utils
    implicit none
    include 'cefine-version.fh'
 
    type(tb_argparser) :: ap
+   type(tb_molecule) :: mol
    integer io,i,nn
-   character*80 out,run1,run2,run3
+   character*80 out,run1,run2
    character*80 func, func_
    character*80 grid, grid_
    character*80 bas, bas_
@@ -64,8 +67,12 @@ Program comand_line_define
    character(len=:), allocatable :: home
 
    character(len=:), allocatable :: define_prog
+   character(len=:), allocatable :: coord_file, extension, basename, directory
+   integer :: ftype, ich
 
    character(len=:), allocatable :: string
+
+   character(len=:), allocatable :: run_command
 
    logical :: exist
    logical :: helpme
@@ -94,8 +101,8 @@ Program comand_line_define
    io=1
 
    out='def.inp'
-   !      run3='define_huge<def.inp>define.out'
-   run3='define<def.inp>define.out'
+
+   run_command = define_prog // '<def.inp>define.out'
 
    ! defaults
    maxiter=125
@@ -245,7 +252,7 @@ Program comand_line_define
    endif
 
    call ap%new
-   write(output_unit, '("provided",1x,i0,1x,"arguments")') size(ap)
+   write(output_unit, '(/,"provided arguments:",1x,i0)') size(ap)
    call ap%write(output_unit)
 
    helpme = ap%has_option('h') .or. ap%has_option('help')
@@ -401,7 +408,28 @@ Program comand_line_define
       newlib = newlib_
    endif
 
-   if (uhf) write(output_unit, '("*** UHF switched ON ***")')
+   write(output_unit, '(a)')
+   if (file(ap) > 0) then
+      call ap%get_file(coord_file)
+      call file_generate_meta_info(coord_file, extension, basename, directory)
+      call file_figure_out_ftype(ftype, extension, basename)
+   else
+      coord_file = 'coord'
+      inquire(file=coord_file, exist=exist)
+      if (.not.exist) error stop 'coord file not provided'
+      call file_figure_out_ftype(ftype, coord_file, coord_file)
+   endif
+   write(output_unit, '("Taking coordinates from: ''",a,"''")') coord_file
+   open(file=coord_file, newunit=ich)
+   call mol%read(ich, format=ftype)
+   close(ich)
+   open(file='coord', newunit=ich)
+   write(ich, '(a)') "$coord"
+   do i = 1, len(mol)
+      write(ich, '(3f20.14,6x,a2)') mol%xyz(:,i), mol%sym(i)
+   enddo
+   write(ich, '(a)') "$end"
+   close(ich)
 
    if (len(ap) > 0) then
       do i = 1, len(ap)
@@ -411,51 +439,54 @@ Program comand_line_define
       error stop 'unknown command line arguments provided'
    endif
 
+   write(output_unit, '(a)')
    !c read possible file .SYM and .UHF
 
-   inquire(file='.SYM',exist=da)
-   if(da)then
-      open(unit=21,file='.SYM')
-      read(21,'(a)') sym
-      if(pr) write(*,'(''!!! symmetry enforced by user in <.SYM>   : '',a,'' !!!'')')trim(sym)
+   inquire(file='.SYM', exist=exist)
+   if (exist) then
+      open(newunit=ich, file='.SYM')
+      read(ich, '(a)') sym
+      write(output_unit, '("*** symmetry enforced by user: ",a," ***")') trim(sym)
       DESY=.false.
    endif
-   inquire(file='.UHF',exist=da)
-   if(da)then
-      open(unit=21,file='.UHF')
-      read(21,*) nopen
+
+   inquire(file='.UHF', exist=exist)
+   if (exist) then
+      open(newunit=ich, file='.UHF')
+      read(ich, *) nopen
       UHF=.true.
-      if(pr) write(*,'(''!!! UHF enforced by user in <.UHF> . Na-Nb:'',i4,'' !!!'')')nopen
    endif
-   inquire(file='.CHRG',exist=da)
-   if(da)then
-      open(unit=21,file='.CHRG')
-      read(21,*) charge
-      if(pr)write(*,'(''!!! charge in <.CHRG> :'',i4,'' !!!'')')charge
+
+   inquire(file='.CHRG', exist=exist)
+   if (exist) then
+      open(newunit=ich, file='.CHRG')
+      read(ich, *) charge
+      write(*, '("*** charge read from .CHRG")')
    endif
+
+   if (uhf) write(output_unit, '("*** UHF switched ON ***")')
 
    ! cbann: if trold, check for hessian files. If present, also activate TS
    ! and save hessian
    if(TROLD) then
-      inquire(file='hessian',exist=da)
-      if(da) then
+      inquire(file='hessian',exist=exist)
+      if (exist) then
          call execute_command_line("exec mv hessian  hss.tmp")
          TS=.true.
       endif
-      inquire(file='hessian_driver',exist=da)
-      if(da) then
+      inquire(file='hessian_driver',exist=exist)
+      if (exist) then
          call execute_command_line("cat hessian_driver|sed 's/$hessian.*/$hessian (projected)/' > hss.tmp")
          TS=.true.
       endif
    endif
 
-   if(MOLD)call execute_command_line('mv mos mos.tmp')
-   if(OLDMO) then
-      call execute_command_line('rm -fr TMP.MOS')
-      write(*,*) '* projecting old mos to new basis *'
-      call execute_command_line("cpc TMP.MOS &> /dev/null ")
+   if (MOLD) call execute_command_line('exec mv mos mos.tmp')
+   if (OLDMO) then
+      call execute_command_line('exec rm -fr TMP.MOS')
+      write(output_unit, '("*** projecting old mos to new basis ***")')
+      call execute_command_line("exec cpc TMP.MOS &> /dev/null ")
    endif
-
 
    call execute_command_line('rm -rf control basis auxbasis mos alpha beta')
 
@@ -483,7 +514,11 @@ Program comand_line_define
    if(rik.and.cosx) cosx=.false. ! SAW: don't use both
 
    ! c dfpt2 special
-   if(func.eq.'b2-plyp'.or.func.eq.'b2gp-plyp'.or.func.eq.'ptpss'.or.MRCI.or.func.eq.'pwpb95'.or.func.eq.'dsd-blyp') then
+   if (func == 'b2-plyp' .or. &
+      &func == 'b2gp-plyp' .or. &
+      &func == 'ptpss' .or. MRCI .or. &
+      &func == 'pwpb95' .or. &
+      &func == 'dsd-blyp') then
       MP2  =.true.
       SCS  =.false.
       DFPT2=.true.
@@ -498,7 +533,7 @@ Program comand_line_define
    !         SOS=.true.
    !         SCS=.false.
    !      endif
-   if(NOVDW                  )then
+   if (NOVDW) then
       VDW=.false.
       BJ=.false.
       ATM=.false.
@@ -506,7 +541,8 @@ Program comand_line_define
       D4=.false.
       donl=.false.
    endif
-   if(donl)then
+
+   if (donl) then
       VDW=.false.
       BJ=.false.
       ATM=.false.
@@ -516,10 +552,9 @@ Program comand_line_define
       DESY=.false.
    endif
 
-
    !JGB define PBEh-3c defaults
-   if(func.eq.'pbeh3c') func='pbeh-3c'
-   if(func.eq.'pbeh-3c'.and.DFT) then
+   if (func.eq.'pbeh3c') func='pbeh-3c'
+   if (func.eq.'pbeh-3c'.and.DFT) then
       !FB needs .and.DFT else D4 turned off for HF
       if(.not.modbas) bas='def2-mSVP'
       if(.not.modgrid) grid='m4'
@@ -977,7 +1012,7 @@ Program comand_line_define
       !         call execute_command_line('sync')
       ! FB use old $tmole script to keep standartized define, else error with Pd and charge in TM.7.2.1
       !call execute_command_line('echo ''$tmole'' > control; echo ''$end'' >> control')
-      call execute_command_line(run3)
+      call execute_command_line(run_command)
    else
       stop 'def.inp written.'
    endif

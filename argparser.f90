@@ -144,10 +144,10 @@ subroutine ap_get_option(self, option, value, found)
    do iarg = 1, size(self)-1
       associate( arg => self%args(iarg), sec => self%args(iarg+1) )
          if (arg%option .and. arg%unread .and. sec%unread) then
-            found_local = arg%string == option
+            found_local = arg%string == '-'//option .or. arg%string == '--'//option
             if (found_local) then
                call sec%get_value(value, error)
-               if (error /= 0) then
+               if (error == 0) then
                   arg%unread = .false.
                   sec%unread = .false.
                else
@@ -245,7 +245,7 @@ subroutine arg_get_value(self, value, error)
    type is (integer(int32)); call self%to_int32(value, stat)
    type is (integer(int64)); call self%to_int64(value, stat)
    type is (logical); call self%to_logical(value, stat)
-   type is (character(len=*)); value = self%string
+   type is (character(len=*)); stat = 0; value = self%string
    class default
       stat = 128
    end select
